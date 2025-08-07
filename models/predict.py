@@ -44,9 +44,12 @@ class ArcFace(tf.keras.layers.Layer):
 def arcface_loss(y_true, y_pred):
     return tf.keras.losses.sparse_categorical_crossentropy(y_true, y_pred, from_logits=True)
 
-# Load the model
-MODEL_DIR = os.path.join(settings.BASE_DIR, "models")
+import os
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_DIR = os.path.join(BASE_DIR, "models")
 MODEL_PATH = os.path.join(MODEL_DIR, "cat_dog_model.keras")
+
 
 try:
     model = tf.keras.models.load_model(

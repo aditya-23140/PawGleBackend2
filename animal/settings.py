@@ -21,10 +21,23 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Then you can use the / operator
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'libsql',
+        'NAME': 'libsql://pawgle-whoamii00.aws-ap-south-1.turso.io?authToken=eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3NTMxODg1NzEsImlkIjoiOWNlZGI2NjAtODE3OC00Njk4LWIyYTktZmI4ZTI5N2Q3MDI3IiwicmlkIjoiZmEyM2M5ZjAtOTg1Mi00YWRjLThkNGItYTZlOGYxNTY4NWU5In0.ZEOtEVxUuw3Yrg-8Fb2d5F2_8uuQFMvWyR7oh0H5COO8ggLwIvKQtZGUKIEFtJqBFZb6GIpsXnZ_cMfBgbY9DQ',
+        'OPTIONS': {
+            'init_commands': [
+                'PRAGMA journal_mode=WAL;',
+                'PRAGMA synchronous=NORMAL;',
+            ],
+        },
     }
 }
 
