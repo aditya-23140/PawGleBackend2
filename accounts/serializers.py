@@ -76,10 +76,7 @@ class PetLocationSerializer(serializers.ModelSerializer):
     
     def get_image_url(self, obj):
         if obj.image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.image.url)
-            return obj.image.url
+            return obj.image.url  # This will now return the Supabase URL
         return None
 
 class ReportPetLocationSerializer(serializers.Serializer):
@@ -192,9 +189,8 @@ class EditedPetImageSerializer(serializers.ModelSerializer):
         }
 
     def get_edited_image_url(self, obj):
-        request = self.context.get('request')
         if obj.edited_image:
-            return request.build_absolute_uri(obj.edited_image.url)
+            return obj.edited_image.url  # This will now return the Supabase URL
         return None
 
     def create(self, validated_data):

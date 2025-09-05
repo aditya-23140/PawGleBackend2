@@ -19,6 +19,15 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv() 
+
+# Add these to your existing settings.py
+
+# Supabase Configuration
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_BUCKET_NAME = "images"
+
+
 # Change the BASE_DIR definition
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -49,8 +58,14 @@ ALLOWED_HOSTS = ["*"]
 # settings.py
 
 # Add these configurations if they aren't already present
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Adjust the path if needed
+# Add this to your existing settings.py
+DEFAULT_FILE_STORAGE = 'accounts.storage.SupabaseStorage'
+
+# Update your media settings to work with Supabase
+MEDIA_URL = f'{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_NAME}/'
+# Remove the local MEDIA_ROOT since we're using Supabase
+# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Comment this out
+
 # Email configuration
 # Email configuration
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'

@@ -5,6 +5,7 @@ from django.core.validators import MinLengthValidator, RegexValidator, MinValueV
 import json
 import random
 import uuid
+from .storage import SupabaseStorage
 
 # Define validation functions outside the model
 def validate_json_dict(value):
@@ -188,7 +189,11 @@ class PetLocation(models.Model):
     last_seen_time = models.TimeField(null=True, blank=True)
     
     # Add image field
-    image = models.ImageField(upload_to='pet_locations/', null=True, blank=True)
+    image = models.ImageField(
+        storage=SupabaseStorage(),
+        null=True,
+        blank=True
+    )
     
     # Add features field for image recognition
     features = models.JSONField(default=list, validators=[validate_json_list])
@@ -311,9 +316,7 @@ from django.conf import settings
 
 class EditedPetImage(models.Model):
     edited_image = models.ImageField(
-        upload_to='edited_pet_images/',
-        null=False,
-        blank=False,
+        storage=SupabaseStorage(),
         help_text="The edited image file"
     )
     edit_metadata = models.JSONField(
