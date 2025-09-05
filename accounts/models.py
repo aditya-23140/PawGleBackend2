@@ -67,14 +67,15 @@ class Pet(models.Model):
         ]
     )
     
-    # JSON fields with validation
+    # JSON fields with validation - storing image URLs as JSON list instead of using ImageField
     additionalInfo = models.JSONField(
         default=dict,
         validators=[validate_json_dict]
     )
     images = models.JSONField(
         default=list,
-        validators=[validate_json_list]
+        validators=[validate_json_list],
+        help_text="List of image URLs stored in Supabase"
     )
     features = models.JSONField(
         default=list,
@@ -188,11 +189,13 @@ class PetLocation(models.Model):
     last_seen_date = models.DateField(null=True, blank=True)
     last_seen_time = models.TimeField(null=True, blank=True)
     
-    # Add image field
+    # Updated image field with proper Supabase storage
     image = models.ImageField(
         storage=SupabaseStorage(),
+        upload_to='pets/',  # This will be handled by our custom storage
         null=True,
-        blank=True
+        blank=True,
+        help_text="Pet image stored in Supabase"
     )
     
     # Add features field for image recognition
@@ -241,17 +244,37 @@ class PetLocation(models.Model):
             
         try:
             import cv2
-            from your_feature_extraction_module import extract_features
+            import numpy as np
+            from django.core.files.storage import default_storage
+            import tempfile
+            import os
             
-            image = cv2.imread(self.image.path)
-            if image is None:
-                return False
+            # Download the image from Supabase to a temporary file
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                # Read the image data from Supabase storage
+                image_content = self.image.read()
+                temp_file.write(image_content)
+                temp_file.flush()
                 
-            features = extract_features(image)
-            if features:
-                self.features = features
-                self.save(update_fields=['features'])
-                return True
+                # Process the image with OpenCV
+                image = cv2.imread(temp_file.name)
+                if image is None:
+                    return False
+                
+                # Import your feature extraction function
+                try:
+                    from models.predict import extract_features
+                    features = extract_features(image)
+                    if features:
+                        self.features = features
+                        self.save(update_fields=['features'])
+                        return True
+                except ImportError:
+                    print("Feature extraction module not available")
+                finally:
+                    # Clean up temporary file
+                    os.unlink(temp_file.name)
+                    
             return False
         except Exception as e:
             print(f"Error extracting features: {str(e)}")
@@ -270,9 +293,9 @@ class PetLocation(models.Model):
             'isUserLocation': self.is_user_location,
         }
         
-        # Add image URL if available and request is provided
-        if self.image and request:
-            marker['image_url'] = request.build_absolute_uri(self.image.url)
+        # Add image URL if available
+        if self.image:
+            marker['image_url'] = self.image.url  # This will now return the Supabase URL
         
         return marker
     
@@ -310,14 +333,11 @@ class Conversation(models.Model):
             pet_name = self.pet_location.pet_name or "Unknown Pet"
         return f"Conversation {self.id} - {pet_name}"
 
-
-from django.db import models
-from django.conf import settings
-
 class EditedPetImage(models.Model):
     edited_image = models.ImageField(
         storage=SupabaseStorage(),
-        help_text="The edited image file"
+        upload_to='edited_pets/',  # This will be handled by our custom storage
+        help_text="The edited image file stored in Supabase"
     )
     edit_metadata = models.JSONField(
         default=dict,

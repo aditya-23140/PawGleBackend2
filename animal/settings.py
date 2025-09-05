@@ -26,18 +26,12 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET_NAME = "images"
-
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
 
 # Change the BASE_DIR definition
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Then you can use the / operator
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
+# Database configuration with Supabase
 import dj_database_url
 
 DATABASES = {
@@ -45,6 +39,7 @@ DATABASES = {
 }
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
@@ -55,18 +50,16 @@ SECRET_KEY = 'django-insecure-&ydm2wfh15zep(gm1d^ux_$vi04#p00)2ef(_ip5$htzm=mdd4
 DEBUG = True
 
 ALLOWED_HOSTS = ["*"]
-# settings.py
 
-# Add these configurations if they aren't already present
-# Add this to your existing settings.py
+# File Storage Configuration - Use Supabase for all file storage
 DEFAULT_FILE_STORAGE = 'accounts.storage.SupabaseStorage'
 
-# Update your media settings to work with Supabase
+# Media settings for Supabase
 MEDIA_URL = f'{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET_NAME}/'
-# Remove the local MEDIA_ROOT since we're using Supabase
-# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Comment this out
 
-# Email configuration
+# Remove local media root since we're using Supabase
+# MEDIA_ROOT is not needed when using custom storage backend
+
 # Email configuration
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
@@ -105,13 +98,12 @@ SIMPLE_JWT = {
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.common.CommonMiddleware',
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True
@@ -120,11 +112,10 @@ ROOT_URLCONF = 'animal.urls'
 
 SITE_URL = 'http://localhost:3000'  # Replace with your actual site URL
 
-
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],  # Add templates directory
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -138,18 +129,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'animal.wsgi.application'
-
-
-# Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
-
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
@@ -169,7 +148,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
 
@@ -181,7 +159,6 @@ USE_I18N = True
 
 USE_TZ = True
 
-
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
@@ -190,4 +167,22 @@ STATIC_URL = 'static/'
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_field = 'django.db.models.BigAutoField'
+
+# Logging configuration for debugging Supabase storage issues
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'accounts.storage': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+    },
+}
