@@ -70,6 +70,7 @@ class ProfileView(APIView):
             'pets': PetSerializer(pets, many=True).data
         })
 
+
 # class AddPetView(APIView):
 #     permission_classes = [IsAuthenticated]
 #     parser_classes = [MultiPartParser, FormParser]
@@ -98,41 +99,60 @@ class ProfileView(APIView):
 #                     status=status.HTTP_400_BAD_REQUEST
 #                 )
 
-#             # Handle image uploads
+#             # Handle image uploads with Supabase
 #             image_files = request.FILES.getlist('images')
 #             if not image_files:
 #                 return Response({'error': 'No images provided'}, status=status.HTTP_400_BAD_REQUEST)
 
-#             saved_images = []
+#             saved_image_urls = []
 #             all_features = []
+#             supabase_storage = SupabaseStorage()
 
 #             for idx, image_file in enumerate(image_files):
-#                 # Generate unique filename
-#                 timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-#                 filename = f"{request.user.id}_{timestamp}_{idx}_{image_file.name}"
+#                 try:
+#                     # Generate unique filename
+#                     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+#                     file_extension = os.path.splitext(image_file.name)[1].lower()
+#                     filename = f"user_{request.user.id}_{timestamp}_{idx}{file_extension}"
 
-#                 # Save file
-#                 filepath = default_storage.save(filename, image_file)
-#                 full_path = default_storage.path(filepath)
+#                     # Save file to Supabase
+#                     saved_name = supabase_storage._save(filename, image_file)
+#                     image_url = supabase_storage.url(saved_name)
+#                     saved_image_urls.append(image_url)
 
-#                 # Process image
-#                 image = cv2.imread(full_path)
-#                 if image is None:
-#                     return Response({'error': f'Failed to read image: {filename}'}, 
-#                                   status=status.HTTP_400_BAD_REQUEST)
+#                     # Process image for feature extraction
+#                     # Create a temporary file to process with OpenCV
+#                     with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+#                         image_file.seek(0)  # Reset file pointer
+#                         temp_file.write(image_file.read())
+#                         temp_file.flush()
 
-#                 # Extract features using ArcFace model
-#                 features = extract_features(image)
-#                 if features:
-#                     all_features.append(features)
-#                 else:
-#                     print(f"Warning: Could not extract features from {filename}")
+#                         # Process image
+#                         image = cv2.imread(temp_file.name)
+#                         if image is None:
+#                             print(f"Warning: Could not read image: {filename}")
+#                             continue
 
-#                 saved_images.append(filename)
+#                         # Extract features using ArcFace model
+#                         features = extract_features(image)
+#                         if features:
+#                             all_features.append(features)
+#                         else:
+#                             print(f"Warning: Could not extract features from {filename}")
+
+#                         # Clean up temporary file
+#                         os.unlink(temp_file.name)
+
+#                 except Exception as e:
+#                     print(f"Error processing image {idx}: {str(e)}")
+#                     continue
+
+#             if not saved_image_urls:
+#                 return Response({'error': 'Failed to save any images'}, status=status.HTTP_400_BAD_REQUEST)
 
 #             # Add final image and feature data
 #             pet_data.update({
-#                 'images': saved_images,
+#                 'images': saved_image_urls,  # Store URLs instead of filenames
 #                 'features': all_features,
 #             })
 
@@ -159,23 +179,26 @@ class ProfileView(APIView):
             
 #             image_file = request.FILES['image']
             
-#             # Save the uploaded image temporarily
-#             temp_filename = f"temp_{now().strftime('%Y%m%d%H%M%S')}_{image_file.name}"
-#             temp_filepath = default_storage.save(temp_filename, image_file)
-#             temp_full_path = default_storage.path(temp_filepath)
-            
-#             # Process the image
-#             image = cv2.imread(temp_full_path)
-#             if image is None:
-#                 default_storage.delete(temp_filepath)
-#                 return Response({'error': 'Failed to read image'}, status=status.HTTP_400_BAD_REQUEST)
-            
-#             # Extract features using ArcFace model
-#             query_features = extract_features(image)
-#             if not query_features:
-#                 default_storage.delete(temp_filepath)
-#                 return Response({'error': 'Failed to extract features from image'}, 
-#                               status=status.HTTP_400_BAD_REQUEST)
+#             # Save the uploaded image temporarily to process it
+#             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+#                 temp_file.write(image_file.read())
+#                 temp_file.flush()
+                
+#                 # Process the image
+#                 image = cv2.imread(temp_file.name)
+#                 if image is None:
+#                     os.unlink(temp_file.name)
+#                     return Response({'error': 'Failed to read image'}, status=status.HTTP_400_BAD_REQUEST)
+                
+#                 # Extract features using ArcFace model
+#                 query_features = extract_features(image)
+#                 if not query_features:
+#                     os.unlink(temp_file.name)
+#                     return Response({'error': 'Failed to extract features from image'}, 
+#                                   status=status.HTTP_400_BAD_REQUEST)
+                
+#                 # Clean up temporary file
+#                 os.unlink(temp_file.name)
             
 #             # Get all pets and pet locations
 #             all_pets = Pet.objects.all()
@@ -211,49 +234,59 @@ class ProfileView(APIView):
 #                 if not location.image:
 #                     continue
                 
-#                 # Extract features from the location image
-#                 location_image_path = location.image.path
-#                 location_image = cv2.imread(location_image_path)
-                
-#                 if location_image is not None:
-#                     location_features = extract_features(location_image)
-                    
-#                     if location_features:
-#                         similarity = compare_features(query_features, location_features)
+#                 try:
+#                     # Download image from Supabase and process it
+#                     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+#                         # Read image from Supabase storage
+#                         location.image.file.seek(0)
+#                         temp_file.write(location.image.file.read())
+#                         temp_file.flush()
                         
-#                         if similarity > 0.7:  # Same threshold as above
-#                             # Determine if this is linked to a registered pet
-#                             pet_data = None
-#                             if location.pet:
-#                                 pet_data = PetSerializer(location.pet).data
+#                         location_image = cv2.imread(temp_file.name)
+                        
+#                         if location_image is not None:
+#                             location_features = extract_features(location_image)
                             
-#                             # Create location data
-#                             location_data = {
-#                                 'id': location.id,
-#                                 'latitude': location.latitude,
-#                                 'longitude': location.longitude,
-#                                 'status': location.status,
-#                                 'reported_at': location.reported_at,
-#                                 'description': location.description,
-#                                 'image_url': request.build_absolute_uri(location.image.url) if location.image else None,
-#                                 'pet_name': location.pet_name if not location.pet else location.pet.name,
-#                                 'pet_type': location.pet_type if not location.pet else location.pet.type,
-#                                 'pet_breed': location.pet_breed if not location.pet else location.pet.breed,
-#                             }
-                            
-#                             results.append({
-#                                 'pet': pet_data,
-#                                 'pet_location': location_data,
-#                                 'similarity': similarity,
-#                                 'type': 'location',
-#                                 'status': location.status  # 'lost' or 'found'
-#                             })
+#                             if location_features:
+#                                 similarity = compare_features(query_features, location_features)
+                                
+#                                 if similarity > 0.7:  # Same threshold as above
+#                                     # Determine if this is linked to a registered pet
+#                                     pet_data = None
+#                                     if location.pet:
+#                                         pet_data = PetSerializer(location.pet).data
+                                    
+#                                     # Create location data
+#                                     location_data = {
+#                                         'id': location.id,
+#                                         'latitude': location.latitude,
+#                                         'longitude': location.longitude,
+#                                         'status': location.status,
+#                                         'reported_at': location.reported_at,
+#                                         'description': location.description,
+#                                         'image_url': location.image.url if location.image else None,
+#                                         'pet_name': location.pet_name if not location.pet else location.pet.name,
+#                                         'pet_type': location.pet_type if not location.pet else location.pet.type,
+#                                         'pet_breed': location.pet_breed if not location.pet else location.pet.breed,
+#                                     }
+                                    
+#                                     results.append({
+#                                         'pet': pet_data,
+#                                         'pet_location': location_data,
+#                                         'similarity': similarity,
+#                                         'type': 'location',
+#                                         'status': location.status  # 'lost' or 'found'
+#                                     })
+                        
+#                         # Clean up temporary file
+#                         os.unlink(temp_file.name)
+                        
+#                 except Exception as e:
+#                     print(f"Error processing location image {location.id}: {str(e)}")
+#                     continue
             
 #             # Sort results by similarity (highest first)
 #             results.sort(key=lambda x: x['similarity'], reverse=True)
-            
-#             # Clean up temporary file
-#             default_storage.delete(temp_filepath)
             
 #             return Response({
 #                 'results': results[:10]  # Return top 10 results
@@ -261,6 +294,87 @@ class ProfileView(APIView):
             
 #         except Exception as e:
 #             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+from .pawgle_client import pawgle_client
+import tempfile
+import os
+from django.core.files.storage import default_storage
+
+from django.contrib.auth import get_user_model
+from rest_framework import status, permissions, views
+from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
+from .serializers import RegisterSerializer, UserSerializer, PetSerializer
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from .models import Pet, Conversation
+from rest_framework.parsers import MultiPartParser, FormParser
+import json
+import cv2
+import os
+from django.conf import settings
+from django.core.files.storage import default_storage
+from django.utils.timezone import now
+import numpy as np
+from datetime import datetime
+from .storage import SupabaseStorage
+import tempfile
+import logging
+from PIL import Image
+
+# Import the updated Pawgle client
+from .pawgle_client import pawgle_client
+
+logger = logging.getLogger(__name__)
+
+def authenticate_user_by_email(email, password):
+    try:
+        user = get_user_model().objects.get(email=email)
+        if user.check_password(password):
+            return user
+    except get_user_model().DoesNotExist:
+        return None
+
+class RegisterView(views.APIView):
+    def post(self, request):
+        serializer = RegisterSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            refresh = RefreshToken.for_user(user)
+
+            return Response({
+                'user': UserSerializer(user).data,
+                'refresh': str(refresh),
+                'access': str(refresh.access_token)
+            }, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class LoginView(views.APIView):
+    def post(self, request):
+        email = request.data.get('email')  
+        password = request.data.get('password')
+
+        user = authenticate_user_by_email(email=email, password=password)
+
+        if user:
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                'refresh': str(refresh),
+                'access': str(refresh.access_token)
+            }, status=status.HTTP_200_OK)
+        return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+
+class ProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        pets = Pet.objects.filter(owner=user)
+        return Response({
+            'user': UserSerializer(user).data,
+            'pets': PetSerializer(pets, many=True).data
+        })
 
 class AddPetView(APIView):
     permission_classes = [IsAuthenticated]
@@ -273,89 +387,91 @@ class AddPetView(APIView):
                 'owner': request.user.id,
                 'name': request.data.get('name'),
                 'category': request.data.get('category'),
-                'type': request.data.get('type'),
+                'pet_type': request.data.get('pet_type'),
                 'breed': request.data.get('breed'),
-                'isPublic': request.data.get('isPublic', 'false').lower() == 'true',
+                'share_contact_info': request.data.get('share_contact_info', 'false').lower() == 'true',
             }
 
-            # Handle additionalInfo JSON
-            additional_info = request.data.get('additionalInfo', '{}')
-            try:
-                pet_data['additionalInfo'] = json.loads(additional_info)
-                if not isinstance(pet_data['additionalInfo'], dict):
-                    raise ValueError("AdditionalInfo must be a JSON object")
-            except (json.JSONDecodeError, ValueError) as e:
-                return Response(
-                    {'error': f'Invalid additionalInfo: {str(e)}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            # Handle image upload
+            image_file = request.FILES.get('image')
+            if not image_file:
+                return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Handle image uploads with Supabase
-            image_files = request.FILES.getlist('images')
-            if not image_files:
-                return Response({'error': 'No images provided'}, status=status.HTTP_400_BAD_REQUEST)
-
-            saved_image_urls = []
-            all_features = []
+            # Save image to Supabase first
             supabase_storage = SupabaseStorage()
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            file_extension = os.path.splitext(image_file.name)[1].lower()
+            filename = f"user_{request.user.id}_{timestamp}{file_extension}"
+            
+            saved_name = supabase_storage._save(filename, image_file)
+            pet_data['image'] = saved_name
 
-            for idx, image_file in enumerate(image_files):
+            # Create temporary file for HF Space processing
+            with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+                image_file.seek(0)
+                temp_file.write(image_file.read())
+                temp_path = temp_file.name
+
+            try:
+                logger.info("Processing image with HF Space API...")
+                
+                # Extract features using the improved HF Space API
+                features, feature_message = pawgle_client.extract_features(temp_path)
+                
+                # Classify the pet
+                classification, class_message = pawgle_client.classify_pet(temp_path)
+                
+                # Store results
+                if features:
+                    pet_data['features'] = features  # Store as JSON array
+                    logger.info(f"Features extracted: {len(features)} dimensions")
+                else:
+                    logger.warning(f"Feature extraction failed: {feature_message}")
+                    pet_data['features'] = []
+
+                if classification:
+                    pet_data['ai_classification'] = classification
+                    logger.info(f"Pet classified as: {classification}")
+                else:
+                    logger.warning(f"Classification failed: {class_message}")
+                    pet_data['ai_classification'] = "Classification unavailable"
+
+            except Exception as e:
+                logger.error(f"HF Space API error: {e}")
+                pet_data['features'] = []
+                pet_data['ai_classification'] = "Processing failed"
+            
+            finally:
+                # Clean up temporary file
                 try:
-                    # Generate unique filename
-                    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-                    file_extension = os.path.splitext(image_file.name)[1].lower()
-                    filename = f"user_{request.user.id}_{timestamp}_{idx}{file_extension}"
+                    os.unlink(temp_path)
+                except:
+                    pass
 
-                    # Save file to Supabase
-                    saved_name = supabase_storage._save(filename, image_file)
-                    image_url = supabase_storage.url(saved_name)
-                    saved_image_urls.append(image_url)
-
-                    # Process image for feature extraction
-                    # Create a temporary file to process with OpenCV
-                    with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
-                        image_file.seek(0)  # Reset file pointer
-                        temp_file.write(image_file.read())
-                        temp_file.flush()
-
-                        # Process image
-                        image = cv2.imread(temp_file.name)
-                        if image is None:
-                            print(f"Warning: Could not read image: {filename}")
-                            continue
-
-                        # Extract features using ArcFace model
-                        features = extract_features(image)
-                        if features:
-                            all_features.append(features)
-                        else:
-                            print(f"Warning: Could not extract features from {filename}")
-
-                        # Clean up temporary file
-                        os.unlink(temp_file.name)
-
-                except Exception as e:
-                    print(f"Error processing image {idx}: {str(e)}")
-                    continue
-
-            if not saved_image_urls:
-                return Response({'error': 'Failed to save any images'}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Add final image and feature data
-            pet_data.update({
-                'images': saved_image_urls,  # Store URLs instead of filenames
-                'features': all_features,
-            })
-
-            # Validate and save
+            # Validate and save pet
             serializer = PetSerializer(data=pet_data, context={'request': request})
             if serializer.is_valid():
                 pet = serializer.save()
-                return Response(serializer.data, status=status.HTTP_201_CREATED)
+                
+                response_data = {
+                    'success': True,
+                    'pet': serializer.data,
+                    'processing_results': {
+                        'features_extracted': bool(features),
+                        'feature_dimensions': len(features) if features else 0,
+                        'classification': classification or "Unavailable",
+                        'feature_message': feature_message,
+                        'classification_message': class_message
+                    },
+                    'message': 'Pet added successfully'
+                }
+                
+                return Response(response_data, status=status.HTTP_201_CREATED)
 
             return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
+            logger.error(f"Error in AddPetView: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class SearchPetView(APIView):
@@ -364,128 +480,215 @@ class SearchPetView(APIView):
     
     def post(self, request):
         try:
-            # Get the uploaded image
+            # Get the uploaded search image
             if 'image' not in request.FILES:
                 return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
             
             image_file = request.FILES['image']
+            logger.info("Starting pet search with uploaded image")
             
-            # Save the uploaded image temporarily to process it
+            # Save search image temporarily
             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                image_file.seek(0)
                 temp_file.write(image_file.read())
-                temp_file.flush()
-                
-                # Process the image
-                image = cv2.imread(temp_file.name)
-                if image is None:
-                    os.unlink(temp_file.name)
-                    return Response({'error': 'Failed to read image'}, status=status.HTTP_400_BAD_REQUEST)
-                
-                # Extract features using ArcFace model
-                query_features = extract_features(image)
-                if not query_features:
-                    os.unlink(temp_file.name)
-                    return Response({'error': 'Failed to extract features from image'}, 
-                                  status=status.HTTP_400_BAD_REQUEST)
-                
-                # Clean up temporary file
-                os.unlink(temp_file.name)
+                search_image_path = temp_file.name
             
-            # Get all pets and pet locations
-            all_pets = Pet.objects.all()
-            all_pet_locations = PetLocation.objects.filter(status__in=['lost', 'found'])
-            
-            # Compare features with all pets
-            results = []
-            
-            # Process registered pets
-            for pet in all_pets:
-                # Skip pets with no features
-                if not pet.features:
-                    continue
+            try:
+                # Extract features from search image using HF Space
+                logger.info("Extracting features from search image...")
+                search_features, message = pawgle_client.extract_features(search_image_path)
                 
-                # Get the highest similarity score among all pet images
-                max_similarity = 0.0
-                for pet_features in pet.features:
-                    similarity = compare_features(query_features, pet_features)
-                    max_similarity = max(max_similarity, similarity)
+                if not search_features:
+                    return Response({
+                        'error': f'Failed to extract features from search image: {message}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                logger.info(f"Search image features extracted: {len(search_features)} dimensions")
+
+                # Get all pets with features from database
+                all_pets = Pet.objects.exclude(features__isnull=True).exclude(features=[])
+                logger.info(f"Found {all_pets.count()} pets with features in database")
                 
-                # Add to results if similarity is above threshold
-                if max_similarity > 0.7:  # Adjust threshold as needed
-                    results.append({
-                        'pet': PetSerializer(pet).data,
-                        'similarity': max_similarity,
-                        'type': 'registered',
-                        'status': None  # Regular pet, not lost or found
+                if all_pets.count() == 0:
+                    return Response({
+                        'success': True,
+                        'results': [],
+                        'message': 'No pets with features found in database'
                     })
-            
-            # Process lost/found pet locations
-            for location in all_pet_locations:
-                # Skip locations without images
-                if not location.image:
-                    continue
+
+                # Prepare database features for batch comparison
+                pet_list = list(all_pets)
+                database_features = []
+                valid_pets = []
                 
+                for pet in pet_list:
+                    if pet.features and isinstance(pet.features, list) and len(pet.features) > 0:
+                        database_features.append(pet.features)
+                        valid_pets.append(pet)
+                    else:
+                        logger.debug(f"Pet {pet.id} has invalid features: {type(pet.features)}")
+
+                if not database_features:
+                    return Response({
+                        'success': True,
+                        'results': [],
+                        'message': 'No valid features found in database'
+                    })
+
+                logger.info(f"Comparing with {len(database_features)} valid pet feature sets")
+
+                # Use batch comparison API for efficiency
+                similarities, comparison_message = pawgle_client.batch_compare_features(
+                    search_features, database_features
+                )
+                
+                if similarities is None:
+                    return Response({
+                        'error': f'Feature comparison failed: {comparison_message}'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+                # Process results
+                results = []
+                similarity_threshold = 0.3  # Adjustable threshold
+                
+                for sim_result in similarities:
+                    similarity_score = sim_result['similarity']
+                    pet_index = sim_result['index']
+                    
+                    if similarity_score > similarity_threshold and pet_index < len(valid_pets):
+                        pet = valid_pets[pet_index]
+                        
+                        results.append({
+                            'pet_id': pet.id,
+                            'name': pet.name,
+                            'pet_type': pet.pet_type,
+                            'breed': pet.breed,
+                            'image_url': pet.image.url if pet.image else None,
+                            'similarity_score': round(similarity_score, 4),
+                            'owner_contact': pet.owner.email if pet.share_contact_info else None,
+                            'ai_classification': getattr(pet, 'ai_classification', 'Unknown'),
+                            'similarity_level': (
+                                'High' if similarity_score > 0.8 else
+                                'Medium' if similarity_score > 0.5 else
+                                'Low'
+                            )
+                        })
+
+                # Sort by similarity (highest first) and limit results
+                results = results[:10]  # Top 10 matches
+
+                logger.info(f"Found {len(results)} matches above threshold {similarity_threshold}")
+
+                return Response({
+                    'success': True,
+                    'results': results,
+                    'search_info': {
+                        'total_pets_searched': len(database_features),
+                        'matches_found': len(results),
+                        'similarity_threshold': similarity_threshold,
+                        'search_feature_dimensions': len(search_features)
+                    },
+                    'message': f'Found {len(results)} similar pets'
+                })
+                
+            finally:
+                # Clean up search image temp file
                 try:
-                    # Download image from Supabase and process it
-                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
-                        # Read image from Supabase storage
-                        location.image.file.seek(0)
-                        temp_file.write(location.image.file.read())
-                        temp_file.flush()
-                        
-                        location_image = cv2.imread(temp_file.name)
-                        
-                        if location_image is not None:
-                            location_features = extract_features(location_image)
-                            
-                            if location_features:
-                                similarity = compare_features(query_features, location_features)
-                                
-                                if similarity > 0.7:  # Same threshold as above
-                                    # Determine if this is linked to a registered pet
-                                    pet_data = None
-                                    if location.pet:
-                                        pet_data = PetSerializer(location.pet).data
-                                    
-                                    # Create location data
-                                    location_data = {
-                                        'id': location.id,
-                                        'latitude': location.latitude,
-                                        'longitude': location.longitude,
-                                        'status': location.status,
-                                        'reported_at': location.reported_at,
-                                        'description': location.description,
-                                        'image_url': location.image.url if location.image else None,
-                                        'pet_name': location.pet_name if not location.pet else location.pet.name,
-                                        'pet_type': location.pet_type if not location.pet else location.pet.type,
-                                        'pet_breed': location.pet_breed if not location.pet else location.pet.breed,
-                                    }
-                                    
-                                    results.append({
-                                        'pet': pet_data,
-                                        'pet_location': location_data,
-                                        'similarity': similarity,
-                                        'type': 'location',
-                                        'status': location.status  # 'lost' or 'found'
-                                    })
-                        
-                        # Clean up temporary file
-                        os.unlink(temp_file.name)
-                        
-                except Exception as e:
-                    print(f"Error processing location image {location.id}: {str(e)}")
-                    continue
-            
-            # Sort results by similarity (highest first)
-            results.sort(key=lambda x: x['similarity'], reverse=True)
-            
-            return Response({
-                'results': results[:10]  # Return top 10 results
-            })
+                    os.unlink(search_image_path)
+                except:
+                    pass
             
         except Exception as e:
+            logger.error(f"Error in SearchPetView: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class PublicPetDashboardView(APIView):
+    def get(self, request):
+        public_pets = Pet.objects.filter(share_contact_info=True)
+        serializer = PetSerializer(public_pets, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class DeletePetView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pet_id):
+        try:
+            pet = Pet.objects.get(id=pet_id, owner=request.user)
+        except Pet.DoesNotExist:
+            return Response({"detail": "Pet not found or not owned by this user."}, status=status.HTTP_404_NOT_FOUND)
+        
+        pet.delete()
+        return Response({"detail": "Pet deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+
+class EditPetView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, pet_id):
+        try:
+            pet = Pet.objects.get(id=pet_id, owner=request.user)
+        except Pet.DoesNotExist:
+            return Response({"detail": "Pet not found or not owned by this user."}, status=status.HTTP_404_NOT_FOUND)
+
+        # If a new image is uploaded, re-extract features
+        if 'image' in request.FILES:
+            image_file = request.FILES['image']
+            
+            # Update image storage
+            supabase_storage = SupabaseStorage()
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            file_extension = os.path.splitext(image_file.name)[1].lower()
+            filename = f"user_{request.user.id}_{timestamp}{file_extension}"
+            
+            saved_name = supabase_storage._save(filename, image_file)
+            request.data['image'] = saved_name
+            
+            # Re-extract features for new image
+            with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+                image_file.seek(0)
+                temp_file.write(image_file.read())
+                temp_path = temp_file.name
+
+            try:
+                features, _ = pawgle_client.extract_features(temp_path)
+                classification, _ = pawgle_client.classify_pet(temp_path)
+                
+                if features:
+                    request.data['features'] = features
+                if classification:
+                    request.data['ai_classification'] = classification
+                    
+            except Exception as e:
+                logger.error(f"Error re-extracting features: {e}")
+            finally:
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+
+        serializer = PetSerializer(pet, data=request.data, partial=True)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# class EditPetView(APIView):
+#     permission_classes = [IsAuthenticated]
+#     def put(self, request, pet_id):
+#         try:
+#             pet = Pet.objects.get(id=pet_id, owner=request.user)
+#         except Pet.DoesNotExist:
+#             return Response({"detail": "Pet not found or not owned by this user."}, status=status.HTTP_404_NOT_FOUND)
+
+#         serializer = PetSerializer(pet, data=request.data, partial=True) 
+
+#         if serializer.is_valid():
+#             serializer.save()
+#             return Response(serializer.data, status=status.HTTP_200_OK)
+
+#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class PublicPetDashboardView(APIView):
 
@@ -508,21 +711,6 @@ class DeletePetView(APIView):
         pet.delete()
         return Response({"detail": "Pet deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
 
-class EditPetView(APIView):
-    permission_classes = [IsAuthenticated]
-    def put(self, request, pet_id):
-        try:
-            pet = Pet.objects.get(id=pet_id, owner=request.user)
-        except Pet.DoesNotExist:
-            return Response({"detail": "Pet not found or not owned by this user."}, status=status.HTTP_404_NOT_FOUND)
-
-        serializer = PetSerializer(pet, data=request.data, partial=True) 
-
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 class GetPetCountView(APIView):
     def get(self, request):

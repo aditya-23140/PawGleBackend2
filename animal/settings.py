@@ -27,7 +27,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_BUCKET_NAME = "images"
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY") 
-
+HUGGINGFACE_API_TOKEN=os.getenv("HUGGINGFACE_API_TOKEN")
 # Change the BASE_DIR definition
 BASE_DIR = Path(__file__).resolve().parent.parent
 
