@@ -16,8 +16,9 @@ class PawgleAPIClient:
         """Lazy load the Gradio client"""
         if self._client is None:
             try:
+                # Use the correct URL format for Hugging Face Spaces
                 self._client = Client(f"https://huggingface.co/spaces/{self.space_url}")
-                logger.info("Connected to Pawgle HF Space")
+                logger.info(f"Connected to Pawgle HF Space: {self.space_url} ✔")
             except Exception as e:
                 logger.error(f"Failed to connect to HF Space: {e}")
                 raise
@@ -29,14 +30,16 @@ class PawgleAPIClient:
         Returns: (features_list, success_message) or (None, error_message)
         """
         try:
-            # Save PIL image to temporary file for Gradio client
-            temp_path = "/tmp/temp_image.jpg"
-            
-            if isinstance(image, Image.Image):
-                image.save(temp_path, format='JPEG')
-            else:
-                # If it's a file path, use directly
+            # Use the provided image path directly if it's a string path
+            if not isinstance(image, Image.Image):
                 temp_path = image
+            else:
+                # For PIL images, use tempfile to create a proper temporary file
+                import tempfile
+                import os
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                    temp_path = temp_file.name
+                    image.save(temp_path, format='JPEG')
             
             # Use the new feature extraction endpoint
             result = self.client.predict(
@@ -68,14 +71,16 @@ class PawgleAPIClient:
     def classify_pet(self, image):
         """Classify pet using your deployed model"""
         try:
-            # Save PIL image to temporary file for Gradio client
-            temp_path = "/tmp/temp_image.jpg"
-            
-            if isinstance(image, Image.Image):
-                image.save(temp_path, format='JPEG')
-            else:
-                # If it's a file path, use directly
+            # Use the provided image path directly if it's a string path
+            if not isinstance(image, Image.Image):
                 temp_path = image
+            else:
+                # For PIL images, use tempfile to create a proper temporary file
+                import tempfile
+                import os
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                    temp_path = temp_file.name
+                    image.save(temp_path, format='JPEG')
             
             result = self.client.predict(
                 temp_path,
@@ -91,19 +96,26 @@ class PawgleAPIClient:
     def compare_images_similarity(self, image1, image2):
         """Compare two images for similarity"""
         try:
-            # Save images to temporary files
-            temp_path1 = "/tmp/temp_image1.jpg"
-            temp_path2 = "/tmp/temp_image2.jpg"
+            import tempfile
+            import os
             
-            if isinstance(image1, Image.Image):
-                image1.save(temp_path1, format='JPEG')
-            else:
+            # Handle first image
+            if not isinstance(image1, Image.Image):
                 temp_path1 = image1
-                
-            if isinstance(image2, Image.Image):
-                image2.save(temp_path2, format='JPEG')
             else:
+                # For PIL images, use tempfile to create a proper temporary file
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                    temp_path1 = temp_file.name
+                    image1.save(temp_path1, format='JPEG')
+            
+            # Handle second image
+            if not isinstance(image2, Image.Image):
                 temp_path2 = image2
+            else:
+                # For PIL images, use tempfile to create a proper temporary file
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                    temp_path2 = temp_file.name
+                    image2.save(temp_path2, format='JPEG')
             
             result = self.client.predict(
                 temp_path1,

@@ -392,8 +392,31 @@ class AddPetView(APIView):
                 'share_contact_info': request.data.get('share_contact_info', 'false').lower() == 'true',
             }
 
-            # Handle image upload
-            image_file = request.FILES.get('image')
+            # Handle image upload - check multiple possible keys
+            image_file = None
+            possible_image_keys = ['image', 'images', 'file', 'files', 'pet_image']
+            
+            # Try to find the image in request.FILES
+            for key in possible_image_keys:
+                if key in request.FILES:
+                    image_file = request.FILES[key]
+                    logger.info(f"Found image with key: {key}")
+                    break
+                    
+            # If still no image, check if it's in a list
+            if not image_file:
+                for key in possible_image_keys:
+                    if key in request.FILES:
+                        files = request.FILES.getlist(key)
+                        if files and len(files) > 0:
+                            image_file = files[0]
+                            logger.info(f"Found image in list with key: {key}")
+                            break
+            
+            # Log request data for debugging
+            logger.info(f"Request data: {request.data}")
+            logger.info(f"Request FILES keys: {request.FILES.keys()}")
+            
             if not image_file:
                 return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
 
