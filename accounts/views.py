@@ -387,6 +387,7 @@ class AddPetView(APIView):
             
             # Prepare base pet data
             pet_data = {
+                'owner': request.user.id,  # Make sure to include the owner
                 'name': request.data.get('name'),
                 'category': request.data.get('category'),
                 'type': request.data.get('type'),  # Make sure this matches your model field
