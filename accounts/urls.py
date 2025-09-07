@@ -1,4 +1,5 @@
 from django.urls import path
+from django.contrib import admin
 from .views import (
     ListPetLocationsView, ListLostPetsView, ListFoundPetsView,
     ReportPetLocationView, MarkPetStatusView, UserPetLocationsView,
@@ -21,6 +22,8 @@ edited_pet_image_detail = EditedPetImageViewSet.as_view({
 
 urlpatterns = [
     # Your existing URLs
+    
+    path("admin/", admin.site.urls),
     path('signup/', RegisterView.as_view(), name='signup'),
     path('login/', LoginView.as_view(), name='login'),
     path('profile/', ProfileView.as_view(), name='profile'),
