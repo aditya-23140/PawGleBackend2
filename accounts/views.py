@@ -382,52 +382,80 @@ class AddPetView(APIView):
 
     def post(self, request):
         try:
+            logger.info(f"Request data keys: {list(request.data.keys())}")
+            logger.info(f"Request FILES keys: {list(request.FILES.keys())}")
+            
             # Prepare base pet data
             pet_data = {
-                'owner': request.user.id,
                 'name': request.data.get('name'),
                 'category': request.data.get('category'),
-                'pet_type': request.data.get('pet_type'),
+                'type': request.data.get('type'),  # Make sure this matches your model field
                 'breed': request.data.get('breed'),
-                'share_contact_info': request.data.get('share_contact_info', 'false').lower() == 'true',
+                'isPublic': request.data.get('isPublic', 'false').lower() == 'true',
             }
+
+            # Validate required fields
+            required_fields = ['name', 'category', 'type', 'breed']
+            missing_fields = [field for field in required_fields if not pet_data.get(field)]
+            if missing_fields:
+                return Response({
+                    'error': f'Missing required fields: {", ".join(missing_fields)}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Handle additionalInfo JSON
+            additional_info = request.data.get('additionalInfo', '{}')
+            try:
+                pet_data['additionalInfo'] = json.loads(additional_info) if additional_info != '{}' else {}
+                if not isinstance(pet_data['additionalInfo'], dict):
+                    raise ValueError("AdditionalInfo must be a JSON object")
+            except (json.JSONDecodeError, ValueError) as e:
+                pet_data['additionalInfo'] = {}
+                logger.warning(f"Invalid additionalInfo, using empty dict: {str(e)}")
 
             # Handle image upload - check multiple possible keys
             image_file = None
             possible_image_keys = ['image', 'images', 'file', 'files', 'pet_image']
             
-            # Try to find the image in request.FILES
             for key in possible_image_keys:
                 if key in request.FILES:
-                    image_file = request.FILES[key]
-                    logger.info(f"Found image with key: {key}")
-                    break
-                    
-            # If still no image, check if it's in a list
-            if not image_file:
-                for key in possible_image_keys:
-                    if key in request.FILES:
-                        files = request.FILES.getlist(key)
-                        if files and len(files) > 0:
-                            image_file = files[0]
-                            logger.info(f"Found image in list with key: {key}")
-                            break
-            
-            # Log request data for debugging
-            logger.info(f"Request data: {request.data}")
-            logger.info(f"Request FILES keys: {request.FILES.keys()}")
+                    files = request.FILES.getlist(key)
+                    if files and len(files) > 0:
+                        image_file = files[0]  # Take the first image
+                        logger.info(f"Found image with key: {key}, size: {image_file.size} bytes")
+                        break
             
             if not image_file:
+                logger.error(f"No image found in request. Available keys: {list(request.FILES.keys())}")
                 return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate image
+            if image_file.size > 10 * 1024 * 1024:  # 10MB limit
+                return Response({'error': 'Image file too large (max 10MB)'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check file type
+            allowed_types = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+            file_extension = os.path.splitext(image_file.name)[1].lower()
+            if file_extension not in allowed_types:
+                return Response({
+                    'error': f'Invalid file type. Allowed types: {", ".join(allowed_types)}'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             # Save image to Supabase first
             supabase_storage = SupabaseStorage()
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            file_extension = os.path.splitext(image_file.name)[1].lower()
             filename = f"user_{request.user.id}_{timestamp}{file_extension}"
             
-            saved_name = supabase_storage._save(filename, image_file)
-            pet_data['image'] = saved_name
+            try:
+                saved_name = supabase_storage._save(filename, image_file)
+                image_url = supabase_storage.url(saved_name)
+                logger.info(f"Image saved to Supabase: {image_url}")
+                
+                # Store as list of URLs (as per your model)
+                pet_data['images'] = [image_url]
+                
+            except Exception as e:
+                logger.error(f"Failed to save image to Supabase: {e}")
+                return Response({'error': 'Failed to save image'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             # Create temporary file for HF Space processing
             with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
@@ -435,43 +463,67 @@ class AddPetView(APIView):
                 temp_file.write(image_file.read())
                 temp_path = temp_file.name
 
+            features_extracted = False
+            classification_result = "Processing failed"
+            
             try:
                 logger.info("Processing image with HF Space API...")
                 
-                # Extract features using the improved HF Space API
-                features, feature_message = pawgle_client.extract_features(temp_path)
-                
-                # Classify the pet
-                classification, class_message = pawgle_client.classify_pet(temp_path)
-                
-                # Store results
-                if features:
-                    pet_data['features'] = features  # Store as JSON array
-                    logger.info(f"Features extracted: {len(features)} dimensions")
-                else:
-                    logger.warning(f"Feature extraction failed: {feature_message}")
+                # Test the connection first
+                try:
+                    test_client = pawgle_client.client
+                    logger.info("HF Space client connection successful")
+                except Exception as conn_error:
+                    logger.error(f"HF Space connection failed: {conn_error}")
+                    # Continue without features rather than failing the entire request
                     pet_data['features'] = []
-
-                if classification:
-                    pet_data['ai_classification'] = classification
-                    logger.info(f"Pet classified as: {classification}")
-                else:
-                    logger.warning(f"Classification failed: {class_message}")
-                    pet_data['ai_classification'] = "Classification unavailable"
+                    pet_data['additionalInfo']['ai_classification'] = f"Connection failed: {str(conn_error)}"
+                    features_extracted = False
+                    classification_result = f"Connection failed: {str(conn_error)}"
+                
+                if not features_extracted:
+                    # Extract features using the improved HF Space API
+                    logger.info("Attempting feature extraction...")
+                    features, feature_message = pawgle_client.extract_features(temp_path)
+                    
+                    if features:
+                        pet_data['features'] = [features]  # Store as list of feature arrays
+                        logger.info(f"✓ Features extracted successfully: {len(features)} dimensions")
+                        features_extracted = True
+                    else:
+                        logger.warning(f"Feature extraction failed: {feature_message}")
+                        pet_data['features'] = []
+                    
+                    # Classify the pet
+                    logger.info("Attempting pet classification...")
+                    classification, class_message = pawgle_client.classify_pet(temp_path)
+                    
+                    if classification:
+                        # Store classification in additionalInfo
+                        pet_data['additionalInfo']['ai_classification'] = classification
+                        logger.info(f"Pet classified as: {classification}")
+                        classification_result = classification
+                    else:
+                        logger.warning(f"Classification failed: {class_message}")
+                        pet_data['additionalInfo']['ai_classification'] = "Classification unavailable"
+                        classification_result = "Classification unavailable"
 
             except Exception as e:
                 logger.error(f"HF Space API error: {e}")
                 pet_data['features'] = []
-                pet_data['ai_classification'] = "Processing failed"
+                pet_data['additionalInfo']['ai_classification'] = f"Processing error: {str(e)}"
+                classification_result = f"Processing error: {str(e)}"
             
             finally:
                 # Clean up temporary file
                 try:
                     os.unlink(temp_path)
-                except:
-                    pass
+                    logger.info("Cleaned up temporary file")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
 
             # Validate and save pet
+            logger.info("Saving pet to database...")
             serializer = PetSerializer(data=pet_data, context={'request': request})
             if serializer.is_valid():
                 pet = serializer.save()
@@ -480,22 +532,30 @@ class AddPetView(APIView):
                     'success': True,
                     'pet': serializer.data,
                     'processing_results': {
-                        'features_extracted': bool(features),
-                        'feature_dimensions': len(features) if features else 0,
-                        'classification': classification or "Unavailable",
-                        'feature_message': feature_message,
-                        'classification_message': class_message
+                        'features_extracted': features_extracted,
+                        'feature_dimensions': len(pet.features[0]) if pet.features and len(pet.features) > 0 else 0,
+                        'classification': classification_result,
+                        'image_url': image_url,
+                        'image_saved': True,
+                        'debug_info': {
+                            'pet_id': pet.id,
+                            'animal_id': pet.animal_id,
+                            'features_count': len(pet.features) if pet.features else 0
+                        }
                     },
                     'message': 'Pet added successfully'
                 }
                 
+                logger.info(f"✓ Pet saved successfully with ID: {pet.id}")
                 return Response(response_data, status=status.HTTP_201_CREATED)
-
-            return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                logger.error(f"Serializer errors: {serializer.errors}")
+                return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
             logger.error(f"Error in AddPetView: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class SearchPetView(APIView):
     permission_classes = [IsAuthenticated]
@@ -584,7 +644,7 @@ class SearchPetView(APIView):
                         results.append({
                             'pet_id': pet.id,
                             'name': pet.name,
-                            'pet_type': pet.pet_type,
+                            'pet_type': pet.type,
                             'breed': pet.breed,
                             'image_url': pet.image.url if pet.image else None,
                             'similarity_score': round(similarity_score, 4),
@@ -1592,3 +1652,71 @@ class EditedPetImageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         return super().create(request, *args, **kwargs)
+
+
+# Add this to your views.py as a test endpoint
+class TestHFSpaceView(APIView):
+    """Test endpoint to debug HuggingFace Space connection"""
+    
+    def post(self, request):
+        try:
+            from .pawgle_client import pawgle_client
+            import tempfile
+            import os
+            
+            # Test with a simple image
+            if 'image' not in request.FILES:
+                return Response({'error': 'No image provided'}, status=400)
+                
+            image_file = request.FILES['image']
+            
+            # Save to temp file
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                image_file.seek(0)
+                temp_file.write(image_file.read())
+                temp_path = temp_file.name
+            
+            debug_info = {
+                'image_size': image_file.size,
+                'image_name': image_file.name,
+                'temp_path': temp_path
+            }
+            
+            try:
+                # Test connection
+                client = pawgle_client.client
+                debug_info['connection'] = 'Success'
+                
+                # Test feature extraction
+                features, message = pawgle_client.extract_features(temp_path)
+                debug_info['feature_extraction'] = {
+                    'success': features is not None,
+                    'message': message,
+                    'feature_count': len(features) if features else 0
+                }
+                
+                # Test classification
+                classification, class_message = pawgle_client.classify_pet(temp_path)
+                debug_info['classification'] = {
+                    'success': classification is not None,
+                    'result': classification,
+                    'message': class_message
+                }
+                
+            except Exception as e:
+                debug_info['error'] = str(e)
+            
+            finally:
+                # Cleanup
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+            
+            return Response({
+                'debug_info': debug_info,
+                'space_url': pawgle_client.space_url
+            })
+            
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
