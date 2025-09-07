@@ -5,6 +5,12 @@ import numpy as np
 import cv2
 from PIL import Image
 from tensorflow.keras.preprocessing.image import img_to_array
+import json
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Define custom objects (ArcFace layer and arcface_loss function)
 def normalize_l2(x, axis=1):
@@ -53,9 +59,16 @@ def load_models():
     """Load the ArcFace model and embedding model"""
     global model, embedding_model
     
-    MODEL_PATH = "cat_dog_model.keras"  # Place your model file in the repository root
+    MODEL_PATH = "cat_dog_model.keras"  # Ensure this file exists in your HF space
     
     try:
+        logger.info(f"Attempting to load model from: {MODEL_PATH}")
+        logger.info(f"Model file exists: {os.path.exists(MODEL_PATH)}")
+        
+        if not os.path.exists(MODEL_PATH):
+            logger.error(f"Model file not found: {MODEL_PATH}")
+            return False
+            
         model = tf.keras.models.load_model(
             MODEL_PATH,
             custom_objects={"ArcFace": ArcFace, "arcface_loss": arcface_loss}
@@ -67,24 +80,42 @@ def load_models():
             outputs=model.layers[-3].output  # Embedding layer output
         )
         
-        print("ArcFace model loaded successfully")
+        logger.info("✓ ArcFace model loaded successfully")
+        logger.info(f"Model input shape: {model.input_shape}")
+        logger.info(f"Embedding output shape: {embedding_model.output_shape}")
         return True
+        
     except Exception as e:
-        print(f"Error loading ArcFace model: {e}")
+        logger.error(f"❌ Error loading ArcFace model: {e}")
+        model = None
+        embedding_model = None
         return False
 
 def preprocess_image(image):
     """Preprocess PIL image for the ArcFace model"""
     try:
+        logger.info(f"Preprocessing image type: {type(image)}")
+        
         # Convert PIL image to numpy array
-        img_array = np.array(image)
+        if isinstance(image, str):
+            # If it's a file path, load it
+            img_array = cv2.imread(image)
+            if img_array is None:
+                raise ValueError(f"Could not read image from path: {image}")
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
+        else:
+            # Convert PIL image to numpy array
+            img_array = np.array(image)
+        
+        logger.info(f"Original image shape: {img_array.shape}")
         
         # Resize to the expected input size
         resized = cv2.resize(img_array, (224, 224))
+        logger.info(f"Resized image shape: {resized.shape}")
         
         # Ensure RGB format
         if len(resized.shape) == 3 and resized.shape[2] == 3:
-            # PIL images are already in RGB format
+            # Already in RGB format
             pass
         
         # Convert to float and normalize
@@ -94,30 +125,43 @@ def preprocess_image(image):
         # Add batch dimension
         img_array = np.expand_dims(img_array, axis=0)
         
+        logger.info(f"Final preprocessed shape: {img_array.shape}")
         return img_array
+        
     except Exception as e:
-        print(f"Error preprocessing image: {e}")
+        logger.error(f"Error preprocessing image: {e}")
         return None
 
 def extract_features(image):
     """Extract features from an image using the ArcFace model"""
+    logger.info("Starting feature extraction...")
+    
     if embedding_model is None:
+        logger.error("Embedding model is not loaded")
         return None, "Model not loaded"
 
     try:
         # Preprocess the image
+        logger.info("Preprocessing image...")
         preprocessed = preprocess_image(image)
         if preprocessed is None:
             return None, "Error preprocessing image"
         
         # Get embeddings from the model
+        logger.info("Extracting embeddings...")
         embeddings = embedding_model.predict(preprocessed, verbose=0)
+        logger.info(f"Raw embeddings shape: {embeddings.shape}")
         
         # Normalize embeddings
         normalized = embeddings / (np.linalg.norm(embeddings) + 1e-7)
         
-        return normalized.flatten().tolist(), "Features extracted successfully"
+        features_list = normalized.flatten().tolist()
+        logger.info(f"✓ Features extracted successfully: {len(features_list)} dimensions")
+        
+        return features_list, "Features extracted successfully"
+        
     except Exception as e:
+        logger.error(f"Error extracting features: {e}")
         return None, f"Error extracting features: {e}"
 
 def compare_features(features1, features2):
@@ -134,11 +178,13 @@ def compare_features(features1, features2):
         similarity = np.dot(f1, f2) / (np.linalg.norm(f1) * np.linalg.norm(f2) + 1e-7)
         return float(similarity)
     except Exception as e:
-        print(f"Error comparing features: {e}")
+        logger.error(f"Error comparing features: {e}")
         return 0.0
 
 def classify_image(image):
     """Main function for image classification"""
+    logger.info("Starting image classification...")
+    
     if model is None:
         return "Model not loaded. Please check if the model file exists."
     
@@ -149,7 +195,9 @@ def classify_image(image):
             return "Error preprocessing image"
         
         # Get predictions
+        logger.info("Getting predictions...")
         predictions = model.predict(preprocessed, verbose=0)
+        logger.info(f"Predictions shape: {predictions.shape}")
         
         # Get the predicted class (assuming binary classification: 0=Cat, 1=Dog)
         predicted_class = np.argmax(predictions[0])
@@ -158,10 +206,13 @@ def classify_image(image):
         class_names = ["Cat", "Dog"]
         result = f"Prediction: {class_names[predicted_class]}\nConfidence: {confidence:.4f}"
         
+        logger.info(f"✓ Classification result: {result}")
         return result
         
     except Exception as e:
-        return f"Error during prediction: {e}"
+        error_msg = f"Error during prediction: {e}"
+        logger.error(error_msg)
+        return error_msg
 
 def compare_images(image1, image2):
     """Compare two images and return similarity score"""
@@ -182,41 +233,50 @@ def compare_images(image1, image2):
 
 def extract_features_api(image):
     """API endpoint to extract features from an image"""
+    logger.info("API: extract_features_api called")
+    
     if image is None:
-        return {"error": "No image provided"}
+        return json.dumps({"success": False, "error": "No image provided", "features": None})
     
     try:
         features, message = extract_features(image)
         
         if features is None:
-            return {
+            logger.error(f"Feature extraction failed: {message}")
+            return json.dumps({
                 "success": False,
                 "error": message,
                 "features": None
-            }
+            })
         
-        return {
+        logger.info(f"✓ API returning {len(features)} features")
+        return json.dumps({
             "success": True,
             "message": message,
             "features": features,
             "feature_length": len(features)
-        }
+        })
     
     except Exception as e:
-        return {
+        logger.error(f"API error in extract_features_api: {e}")
+        return json.dumps({
             "success": False,
             "error": str(e),
             "features": None
-        }
+        })
 
-def batch_compare_features(query_features, database_features_list):
+def batch_compare_features(query_features_json, database_features_json):
     """
     Compare query features with multiple database features
-    Returns list of similarities
+    Returns JSON string with list of similarities
     """
     try:
+        # Parse JSON inputs
+        query_features = json.loads(query_features_json) if isinstance(query_features_json, str) else query_features_json
+        database_features_list = json.loads(database_features_json) if isinstance(database_features_json, str) else database_features_json
+        
         if not query_features or not database_features_list:
-            return {"error": "Missing features data"}
+            return json.dumps({"success": False, "error": "Missing features data", "similarities": []})
         
         similarities = []
         
@@ -236,26 +296,39 @@ def batch_compare_features(query_features, database_features_list):
         # Sort by similarity (highest first)
         similarities.sort(key=lambda x: x['similarity'], reverse=True)
         
-        return {
+        return json.dumps({
             "success": True,
             "similarities": similarities,
-            "total_compared": len(similarities)
-        }
+            "total_compared": len(similarities),
+            "message": "Batch comparison successful"
+        })
         
     except Exception as e:
-        return {
+        return json.dumps({
             "success": False,
             "error": str(e),
             "similarities": []
-        }
+        })
 
 # Load models on startup
+logger.info("Loading models on startup...")
 model_loaded = load_models()
 
+if model_loaded:
+    logger.info("✓ Models loaded successfully")
+else:
+    logger.error("❌ Failed to load models")
+
 # Create Gradio interface
-with gr.Blocks(title="Cat vs Dog Classifier with ArcFace") as demo:
-    gr.Markdown("# Cat vs Dog Classifier with ArcFace")
-    gr.Markdown("Upload an image to classify it as a cat or dog, extract features, or compare images for similarity.")
+with gr.Blocks(title="PawGle Pet Recognition API") as demo:
+    gr.Markdown("# PawGle Pet Recognition API")
+    gr.Markdown("API for pet image classification, feature extraction, and similarity comparison.")
+    
+    # Add model status display
+    if model_loaded:
+        gr.Markdown("✅ **Status: Models loaded successfully**")
+    else:
+        gr.Markdown("❌ **Status: Models failed to load**")
     
     with gr.Tab("Image Classification"):
         with gr.Row():
@@ -268,7 +341,8 @@ with gr.Blocks(title="Cat vs Dog Classifier with ArcFace") as demo:
         classify_btn.click(
             fn=classify_image,
             inputs=image_input,
-            outputs=classification_output
+            outputs=classification_output,
+            api_name="classify_image"
         )
     
     with gr.Tab("Feature Extraction"):
@@ -278,12 +352,13 @@ with gr.Blocks(title="Cat vs Dog Classifier with ArcFace") as demo:
                 feature_image_input = gr.Image(type="pil", label="Upload Image")
                 extract_btn = gr.Button("Extract Features")
             with gr.Column():
-                feature_output = gr.JSON(label="Feature Extraction Result")
+                feature_output = gr.Textbox(label="Feature Extraction Result (JSON)", lines=10)
         
         extract_btn.click(
             fn=extract_features_api,
             inputs=feature_image_input,
-            outputs=feature_output
+            outputs=feature_output,
+            api_name="extract_features_api"
         )
     
     with gr.Tab("Image Similarity"):
@@ -298,7 +373,8 @@ with gr.Blocks(title="Cat vs Dog Classifier with ArcFace") as demo:
         compare_btn.click(
             fn=compare_images,
             inputs=[image1_input, image2_input],
-            outputs=similarity_output
+            outputs=similarity_output,
+            api_name="compare_images"
         )
     
     with gr.Tab("Batch Feature Comparison"):
@@ -315,32 +391,19 @@ with gr.Blocks(title="Cat vs Dog Classifier with ArcFace") as demo:
                 )
                 batch_compare_btn = gr.Button("Compare Features")
             with gr.Column():
-                batch_output = gr.JSON(label="Batch Comparison Result")
-        
-        def batch_compare_wrapper(query_str, db_str):
-            try:
-                import json
-                query_features = json.loads(query_str) if query_str else None
-                db_features = json.loads(db_str) if db_str else None
-                return batch_compare_features(query_features, db_features)
-            except json.JSONDecodeError as e:
-                return {"error": f"Invalid JSON: {str(e)}"}
+                batch_output = gr.Textbox(label="Batch Comparison Result (JSON)", lines=10)
         
         batch_compare_btn.click(
-            fn=batch_compare_wrapper,
+            fn=batch_compare_features,
             inputs=[query_features_input, db_features_input],
-            outputs=batch_output
+            outputs=batch_output,
+            api_name="batch_compare_features"
         )
-    
-    # Add some example images if you have them
-    gr.Examples(
-        examples=[
-            # Add paths to example images here if you have them
-            # ["example_cat.jpg"],
-            # ["example_dog.jpg"]
-        ],
-        inputs=image_input
-    )
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        share=False,
+        debug=True
+    )
