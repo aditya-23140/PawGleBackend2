@@ -182,6 +182,52 @@ class PetLocation(models.Model):
     
     # Contact information
     contact_name = models.CharField(max_length=100, blank=True)
+    
+    # Feature extraction data
+    features = models.JSONField(null=True, blank=True)
+    
+    def extract_and_store_features(self):
+        """Extract features from the pet location image and store them"""
+        if not self.image:
+            return False
+            
+        from .pawgle_client import pawgle_client
+        import tempfile
+        import os
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Create temporary file for processing
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+            self.image.seek(0)
+            temp_file.write(self.image.read())
+            temp_path = temp_file.name
+        
+        try:
+            # Extract features using the HF Space API
+            logger.info(f"Extracting features for pet location {self.id}...")
+            features, feature_message = pawgle_client.extract_features(temp_path)
+            
+            if features:
+                self.features = features
+                self.save(update_fields=['features'])
+                logger.info(f"Features extracted successfully for pet location {self.id}")
+                return True
+            else:
+                logger.warning(f"Feature extraction failed for pet location {self.id}: {feature_message}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error extracting features for pet location {self.id}: {str(e)}")
+            return False
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
     contact_phone = models.CharField(max_length=20, blank=True)
     contact_email = models.EmailField(blank=True)
     
@@ -243,11 +289,9 @@ class PetLocation(models.Model):
             return False
             
         try:
-            import cv2
-            import numpy as np
-            from django.core.files.storage import default_storage
             import tempfile
             import os
+            from accounts.pawgle_client import pawgle_client
             
             # Download the image from Supabase to a temporary file
             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
@@ -256,26 +300,21 @@ class PetLocation(models.Model):
                 temp_file.write(image_content)
                 temp_file.flush()
                 
-                # Process the image with OpenCV
-                image = cv2.imread(temp_file.name)
-                if image is None:
-                    return False
+                # Extract features using the pawgle client
+                features, message = pawgle_client.extract_features(temp_file.name)
                 
-                # Import your feature extraction function
-                try:
-                    from models.predict import extract_features
-                    features = extract_features(image)
-                    if features:
-                        self.features = features
-                        self.save(update_fields=['features'])
-                        return True
-                except ImportError:
-                    print("Feature extraction module not available")
-                finally:
+                if features:
+                    self.features = features
+                    self.save(update_fields=['features'])
                     # Clean up temporary file
                     os.unlink(temp_file.name)
+                    return True
+                else:
+                    print(f"Feature extraction failed: {message}")
+                    # Clean up temporary file
+                    os.unlink(temp_file.name)
+                    return False
                     
-            return False
         except Exception as e:
             print(f"Error extracting features: {str(e)}")
             return False

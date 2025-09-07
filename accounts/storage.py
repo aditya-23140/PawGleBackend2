@@ -166,3 +166,17 @@ class SupabaseStorage(Storage):
         except Exception as e:
             print(f"Error listing directory {path}: {str(e)}")
             return [], []
+            
+    def _open(self, name, mode='rb'):
+        """Open the specified file from storage."""
+        try:
+            # Download the file from Supabase
+            response = self.supabase.storage.from_(self.bucket_name).download(name)
+            
+            # Create a ContentFile from the downloaded data
+            content = ContentFile(response)
+            content.name = name
+            return content
+        except Exception as e:
+            print(f"Error opening file {name}: {str(e)}")
+            raise

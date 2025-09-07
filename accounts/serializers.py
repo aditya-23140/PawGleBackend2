@@ -158,7 +158,9 @@ class ReportPetLocationSerializer(serializers.Serializer):
         
         # Extract features if image is provided
         if validated_data.get('image'):
-            pet_location.extract_and_store_features()
+            success = pet_location.extract_and_store_features()
+            if not success:
+                print(f"Warning: Could not extract features for pet location {pet_location.id}")
         
         # Create notification if this is a lost pet report
         if pet and validated_data['status'] == 'lost':

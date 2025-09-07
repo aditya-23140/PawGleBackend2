@@ -593,24 +593,41 @@ class SearchPetView(APIView):
                 all_pets = Pet.objects.exclude(features__isnull=True).exclude(features=[])
                 logger.info(f"Found {all_pets.count()} pets with features in database")
                 
-                if all_pets.count() == 0:
+                # Get all pet locations with features
+                all_pet_locations = PetLocation.objects.exclude(features__isnull=True).exclude(features=[])
+                logger.info(f"Found {all_pet_locations.count()} pet locations with features")
+                
+                if all_pets.count() == 0 and all_pet_locations.count() == 0:
                     return Response({
                         'success': True,
                         'results': [],
-                        'message': 'No pets with features found in database'
+                        'message': 'No pets or pet locations with features found in database'
                     })
 
                 # Prepare database features for batch comparison
                 pet_list = list(all_pets)
+                pet_location_list = list(all_pet_locations)
                 database_features = []
                 valid_pets = []
+                valid_pet_locations = []
                 
+                # Add registered pets features
                 for pet in pet_list:
                     if pet.features and isinstance(pet.features, list) and len(pet.features) > 0:
-                        database_features.append(pet.features)
+                        database_features.append(pet.features[0] if isinstance(pet.features[0], list) else pet.features)
                         valid_pets.append(pet)
+                        valid_pet_locations.append(None)
                     else:
                         logger.debug(f"Pet {pet.id} has invalid features: {type(pet.features)}")
+                
+                # Add pet location features
+                for location in pet_location_list:
+                    if location.features and isinstance(location.features, list) and len(location.features) > 0:
+                        database_features.append(location.features)
+                        valid_pets.append(None)
+                        valid_pet_locations.append(location)
+                    else:
+                        logger.debug(f"Pet location {location.id} has invalid features: {type(location.features)}")
 
                 if not database_features:
                     return Response({
@@ -619,7 +636,7 @@ class SearchPetView(APIView):
                         'message': 'No valid features found in database'
                     })
 
-                logger.info(f"Comparing with {len(database_features)} valid pet feature sets")
+                logger.info(f"Comparing with {len(database_features)} valid feature sets")
 
                 # Use batch comparison API for efficiency
                 similarities, comparison_message = pawgle_client.batch_compare_features(
@@ -637,29 +654,52 @@ class SearchPetView(APIView):
                 
                 for sim_result in similarities:
                     similarity_score = sim_result['similarity']
-                    pet_index = sim_result['index']
+                    index = sim_result['index']
                     
-                    if similarity_score > similarity_threshold and pet_index < len(valid_pets):
-                        pet = valid_pets[pet_index]
+                    if similarity_score > similarity_threshold and index < len(valid_pets):
+                        pet = valid_pets[index]
+                        location = valid_pet_locations[index]
                         
-                        results.append({
-                            'pet_id': pet.id,
-                            'name': pet.name,
-                            'pet_type': pet.type,
-                            'breed': pet.breed,
-                            'image_url': pet.image.url if pet.image else None,
-                            'similarity_score': round(similarity_score, 4),
-                            'owner_contact': pet.owner.email if pet.share_contact_info else None,
-                            'ai_classification': getattr(pet, 'ai_classification', 'Unknown'),
-                            'similarity_level': (
-                                'High' if similarity_score > 0.8 else
-                                'Medium' if similarity_score > 0.5 else
-                                'Low'
-                            )
-                        })
+                        if pet:  # This is a registered pet
+                            results.append({
+                                'type': 'registered_pet',
+                                'pet_id': pet.id,
+                                'name': pet.name,
+                                'pet_type': pet.type,
+                                'breed': pet.breed,
+                                'image_url': pet.image.url if pet.image else None,
+                                'similarity_score': round(similarity_score, 4),
+                                'owner_contact': pet.owner.email if pet.share_contact_info else None,
+                                'ai_classification': getattr(pet, 'ai_classification', 'Unknown'),
+                                'similarity_level': (
+                                    'High' if similarity_score > 0.8 else
+                                    'Medium' if similarity_score > 0.5 else
+                                    'Low'
+                                )
+                            })
+                        elif location:  # This is a pet location report
+                            results.append({
+                                'type': 'pet_location',
+                                'location_id': location.id,
+                                'name': location.pet_name if location.pet_name else 'Unknown',
+                                'pet_type': location.pet_type,
+                                'breed': location.pet_breed,
+                                'status': location.status,
+                                'reported_at': location.reported_at,
+                                'image_url': location.image.url if location.image else None,
+                                'similarity_score': round(similarity_score, 4),
+                                'contact_name': location.contact_name,
+                                'contact_email': location.contact_email,
+                                'contact_phone': location.contact_phone,
+                                'similarity_level': (
+                                    'High' if similarity_score > 0.8 else
+                                    'Medium' if similarity_score > 0.5 else
+                                    'Low'
+                                )
+                            })
 
                 # Sort by similarity (highest first) and limit results
-                results = results[:10]  # Top 10 matches
+                results = sorted(results, key=lambda x: x['similarity_score'], reverse=True)[:10]  # Top 10 matches
 
                 logger.info(f"Found {len(results)} matches above threshold {similarity_threshold}")
 
@@ -667,7 +707,7 @@ class SearchPetView(APIView):
                     'success': True,
                     'results': results,
                     'search_info': {
-                        'total_pets_searched': len(database_features),
+                        'total_items_searched': len(database_features),
                         'matches_found': len(results),
                         'similarity_threshold': similarity_threshold,
                         'search_feature_dimensions': len(search_features)
@@ -883,9 +923,49 @@ class ReportPetLocationView(generics.CreateAPIView):
         
         if serializer.is_valid():
             pet_location = serializer.save()
+            
+            # Extract features if image is provided
+            features_extracted = False
+            if pet_location.image:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"Extracting features for pet location {pet_location.id}...")
+                
+                try:
+                    # Create temporary file for processing
+                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                        pet_location.image.seek(0)
+                        temp_file.write(pet_location.image.read())
+                        temp_path = temp_file.name
+                    
+                    # Extract features using pawgle_client
+                    from .pawgle_client import pawgle_client
+                    features, feature_message = pawgle_client.extract_features(temp_path)
+                    
+                    if features:
+                        pet_location.features = features
+                        pet_location.save(update_fields=['features'])
+                        logger.info(f"Features extracted successfully for pet location {pet_location.id}")
+                        features_extracted = True
+                    else:
+                        logger.warning(f"Feature extraction failed for pet location {pet_location.id}: {feature_message}")
+                        
+                except Exception as e:
+                    logger.error(f"Error extracting features for pet location {pet_location.id}: {str(e)}")
+                    
+                finally:
+                    # Clean up temporary file
+                    try:
+                        os.unlink(temp_path)
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup temp file: {cleanup_error}")
+            
             # Use context to ensure image URLs are absolute
+            response_data = PetLocationSerializer(pet_location, context={'request': request}).data
+            response_data['features_extracted'] = features_extracted
+            
             return Response(
-                PetLocationSerializer(pet_location, context={'request': request}).data,
+                response_data,
                 status=status.HTTP_201_CREATED
             )
         
